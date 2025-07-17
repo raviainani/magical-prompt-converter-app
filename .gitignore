@@ -23,13 +23,15 @@ dist-ssr
 *.sln
 *.sw?
 
-# --- NEW ADDITIONS BELOW THIS LINE ---
-
-# Firebase specific files and directories
+# --- Firebase specific files and directories ---
 .firebase/
 .firebaserc
 firebase-debug.log
 
-# Environment variables (crucial for API keys)
+# --- Environment variables (crucial for API keys) ---
 .env
 *.env # Catches files like .env.development, .env.production etc.
+
+# --- Additional untracked files to ignore ---
+.firebase/hosting.cHVibGlj.cache
+functions_backup/
