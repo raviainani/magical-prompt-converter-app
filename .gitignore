@@ -33,7 +33,3 @@ firebase-debug.log
 # Environment variables (crucial for API keys)
 .env
 *.env # Catches files like .env.development, .env.production etc.
-
-# Additional untracked files to ignore
-.firebase/hosting.cHVibGlj.cache
-functions_backup/

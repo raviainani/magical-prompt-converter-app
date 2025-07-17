@@ -16,7 +16,7 @@ const Login: React.FC<LoginProps> = ({ onSwitchToSignUp }) => {
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
-    const { login, loginWithGoogle } = useAuth();
+    const { login, signInWithGoogle } = useAuth();
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -34,7 +34,7 @@ const Login: React.FC<LoginProps> = ({ onSwitchToSignUp }) => {
         setError('');
         setLoading(true);
         try {
-            await loginWithGoogle();
+            await signInWithGoogle();
         } catch (err: any) {
             setError(err.message || 'Failed to sign in with Google.');
             setLoading(false);

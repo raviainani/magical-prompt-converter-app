@@ -4,7 +4,7 @@ import { type User, onAuthStateChanged, signInWithPopup, GoogleAuthProvider, sig
 
 interface AuthContextType {
   currentUser: User | null;
-  loginWithGoogle: () => Promise<void>;
+  signInWithGoogle: () => Promise<void>;
   logout: () => Promise<void>;
   signup: (email: string, password: string) => Promise<void>; // ADDED signup
   login: (email: string, password: string) => Promise<void>; // ADDED login (email/password)
@@ -25,10 +25,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return unsubscribe;
   }, []);
 
-  const loginWithGoogle = async () => {
+  const signInWithGoogle = async () => {
     const provider = new GoogleAuthProvider();
     try {
       await signInWithPopup(auth, provider);
+      console.log("Google Sign-In successful!");
     } catch (error) {
       console.error("Error logging in with Google:", error);
       throw error; // Re-throw for error handling in components
@@ -66,9 +67,16 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   return (
-    <AuthContext.Provider value={{ currentUser, loginWithGoogle, logout, signup, login, loading }}>
-      {children}
-    </AuthContext.Provider>
+   <AuthContext.Provider value={{
+    currentUser,
+    login,
+    logout,
+    signup, // Assuming you have a signup function
+    signInWithGoogle, // <--- THIS MUST BE signInWithGoogle
+    loading
+}}>
+    {children}
+</AuthContext.Provider>
   );
 };
 

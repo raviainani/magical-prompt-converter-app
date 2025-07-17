@@ -1,35 +1,49 @@
-// No longer importing GoogleGenerativeAI since we are using direct fetch
-// import { GoogleGenerativeAI } from "@google/generative-ai";
+// geminiServices.ts (Client-Side File)
 
+// Import Firebase functions necessary for calling Cloud Functions
+import { getFunctions, httpsCallable } from 'firebase/functions';
+// Import your Firebase app instance. Ensure 'app' is exported from firebaseConfig.ts.
+import { app } from '../firebaseConfig'; // Adjust path if necessary
+
+// Check if the client-side API key is set for generateQuestions
 if (!import.meta.env.VITE_GEMINI_API_KEY) {
-    throw new Error("VITE_GEMINI_API_KEY environment variable not set");
+    throw new Error("VITE_GEMINI_API_KEY environment variable not set for client-side API calls.");
 }
 
 const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
-const BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
+// Using v1beta as per your provided URL. Note: newer features like JSON mode often require v1.
+const BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"; 
 
-// REMOVED ALL PREVIOUS DEBUGGING CONSOLE LOGS RELATED TO AI INSTANCE
+// Initialize Firebase Functions client using your Firebase app instance
+const functions = getFunctions(app);
 
+// Define the callable function reference for your Cloud Function (for final prompt generation)
+// This specifies the input (request) and output (response) types for better type safety.
+const callGenerateMagicalPromptFunction = httpsCallable<
+    { initialIdea: string; contextQuestions: string }, // Data sent TO the Cloud Function
+    { magicalPrompt: string } // Data returned FROM the Cloud Function
+>(functions, 'generateMagicalPrompt'); // 'generateMagicalPrompt' must exactly match the name of your Cloud Function
+
+/**
+ * Generates clarifying questions based on an initial prompt.
+ * This function uses a direct fetch call to the Gemini API from the client-side.
+ */
 export const generateQuestions = async (prompt: string): Promise<string[]> => {
-    const modelName = "gemini-1.5-flash"; // Or "gemini-pro" if you prefer
+    const modelName = "gemini-2.5-flash"; // Or "gemini-pro" if you prefer. Using 1.5-flash for broader availability.
     const url = `${BASE_URL}/${modelName}:generateContent`;
 
-    const systemInstruction = `You are an expert AI assistant specializing in prompt engineering and contextual analysis. A user will provide an initial, high-level prompt. Your task is to perform a deep analysis of the user's request, inferring their underlying intent, purpose, and the potential complexity of the desired output.
+    // System instruction is provided as a separate field in the direct API request body.
+    const systemInstructionContent = {
+        parts: [{ text: `You are an expert AI assistant specializing in prompt engineering and contextual analysis. A user will provide an initial, high-level prompt. Your task is to analyze this initial prompt to identify areas that lack clarity, specificity, or sufficient detail.
 
-Based on this analysis, generate a focused set of 3-8 highly specific and targeted questions to extract crucial, actionable details that will shape a powerful final LLM prompt. Prioritize questions that clarify the core nature, purpose, and intended audience of the request. For complex or multi-modal outputs (like videos, scripts, or reports), ensure your questions cover all necessary components (e.g., duration, style, audio, scenes, data structure).
+Based on this analysis, generate a focused set of 3-8 highly specific and targeted questions to extract crucial, actionable details that will shape a powerful final LLM prompt. Prioritize questions that directly lead to concrete specifications for the LLM's role, task, context, format, or constraints.
 
-Respond ONLY with a valid JSON object in the format: { "questions": ["question 1", "question 2", ...] }. Do not include any other text, explanation, or markdown formatting.`;
+Respond ONLY with a valid JSON object in the format: { "questions": ["question 1", "question 2", ...] }. Do not include any other text, explanation, or markdown formatting.` }]
+    };
 
     const requestBody = {
+        systemInstruction: systemInstructionContent, // Correct placement for system instruction
         contents: [
-            {
-                role: "user",
-                parts: [{ text: systemInstruction }],
-            },
-            {
-                role: "model",
-                parts: [{ text: "Understood. I will provide questions in JSON format." }],
-            },
             {
                 role: "user",
                 parts: [{ text: prompt }],
@@ -37,11 +51,12 @@ Respond ONLY with a valid JSON object in the format: { "questions": ["question 1
         ],
         generationConfig: {
             temperature: 0.7,
-            maxOutputTokens: 500,
+            maxOutputTokens: 2048,
         },
+        // You might consider adding safety settings here for client-side calls if you want to filter responses early.
+        // E.g., "safetySettings": [...] as defined in the server-side example I gave previously.
     };
 
-    // Declare responseText here to ensure its scope covers the entire function
     let responseText: string | undefined;
 
     try {
@@ -57,118 +72,94 @@ Respond ONLY with a valid JSON object in the format: { "questions": ["question 1
 
         if (!response.ok) {
             const errorData = await response.json();
-            console.error("API Error Response:", errorData);
+            console.error("API Error Response for questions:", errorData);
             throw new Error(`API request failed with status ${response.status}: ${errorData.error.message || 'Unknown error'}`);
         }
 
         const data = await response.json();
         console.log("Direct fetch call successful for questions:", data);
 
-        // Assign responseText AFTER the data is successfully fetched and parsed to JSON
         responseText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        console.log("Extracted responseText:", responseText); // Log to see what was extracted
+        console.log("Extracted responseText for questions:", responseText);
 
         if (responseText) {
-            // Strip markdown code block delimiters if present
             let cleanJsonString = responseText.trim();
+            // Robust parsing for markdown JSON fences
             if (cleanJsonString.startsWith("```json")) {
                 cleanJsonString = cleanJsonString.substring(cleanJsonString.indexOf("```json") + 7);
             }
             if (cleanJsonString.endsWith("```")) {
                 cleanJsonString = cleanJsonString.substring(0, cleanJsonString.lastIndexOf("```"));
             }
-            cleanJsonString = cleanJsonString.trim(); // Trim again after stripping
+            cleanJsonString = cleanJsonString.trim();
 
             try {
                 const jsonResponse = JSON.parse(cleanJsonString);
-                return jsonResponse.questions;
+                // Ensure it has the 'questions' property and it's an array
+                if (jsonResponse && Array.isArray(jsonResponse.questions)) {
+                    return jsonResponse.questions;
+                } else {
+                    console.warn("Model response for questions was not in expected JSON format: { 'questions': [...] }", jsonResponse);
+                    throw new Error("Model response for questions was not valid JSON or missing 'questions' array.");
+                }
             } catch (parseError) {
-                console.error("Failed to parse JSON after stripping markdown:", parseError);
+                console.error("Failed to parse JSON for questions:", parseError);
                 console.error("Raw response text was:", responseText);
                 console.error("Attempted to parse:", cleanJsonString);
-                throw new Error("Model response was not valid JSON even after stripping markdown.");
+                throw new Error("Model response for questions was not valid JSON even after stripping markdown.");
             }
         } else {
             console.error("No text content found in Gemini API response for questions. Candidates:", data.candidates);
-            return [];
+            // It's usually better to throw an error here if no content is returned, as it's unexpected.
+            throw new Error("No response content from Gemini API for questions.");
         }
-    } catch (error) {
-        console.error("Error generating questions:", error);
-        throw error;
+    } catch (error: unknown) { // Catch unknown error type for better type safety
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error("Error generating questions:", errorMessage);
+        throw new Error(`Failed to generate questions from the AI: ${errorMessage}`);
     }
 };
 
+/**
+ * Generates the final magical prompt by calling a Firebase Cloud Function.
+ * This function is subject to the daily generation limit.
+ */
 export const generateFinalPrompt = async (initialPrompt: string, qaPairs: { question: string; answer: string }[]): Promise<string> => {
-    const modelName = "gemini-1.5-flash"; // Or "gemini-pro"
-    const url = `${BASE_URL}/${modelName}:generateContent`;
+    // Combine initial prompt and Q&A pairs into a single string to send to the Cloud Function
+    const contextQuestions = `
+    Initial Prompt: "${initialPrompt}"
 
-    const systemInstruction = `You are an expert AI Prompt Engineer. Your task is to synthesize an initial user prompt and their answers to several clarifying questions into a single, meticulously structured, and commanding 'magical' prompt for a Large Language Model (LLM).
-
-You MUST organize the generated prompt using the following markdown sections EXACTLY as specified below. Each section must be concise yet packed with relevant details derived from the user's input. If a section is not applicable or information is not provided, OMIT THE SECTION ENTIRELY.
-
-**[ROLE]**: Assign a specific, expert persona to the LLM (e.g., "You are a professional scriptwriter specializing in educational content," "You are an expert fantasy artist.").
-**[CONTEXT]**: Provide the essential background and overall purpose. Set the stage for the LLM.
-**[TASK]**: State the core, imperative directive. Use strong action verbs. For complex outputs, break this down into clear, numbered sub-tasks.
-**[DETAILS/SPECIFICATIONS]**: List all granular attributes, characteristics, themes, styles, and specific elements provided by the user. Use bullet points for clarity.
-**[FORMAT/OUTPUT INSTRUCTIONS]**: Explicitly define the desired output structure, formatting (e.g., JSON, markdown), and any length constraints.
-**[CONSTRAINTS/EXCLUSIONS]**: List any limitations, things to avoid, or specific rules. Use bullet points.
-**[TONE/STYLE]**: Reiterate the exact desired tone and writing style.
-
-Combine all information seamlessly, using polished, clear, and direct language. The final output should be a single, cohesive, actionable directive ready for an LLM. Output ONLY the final, engineered prompt as a single block of text, following the mandatory structure. Do not add any conversational fluff, apologies, or introductory text like 'Here is the final prompt:'.`;
-
-    const userContent = `
-    **Initial Prompt:**
-    "${initialPrompt}"
-
-    **User's Answers to Clarifying Questions:**
+    User's Answers to Clarifying Questions:
     ${qaPairs.map(pair => `- Question: ${pair.question}\n  - Answer: ${pair.answer || 'No answer provided.'}`).join('\n')}
     `;
 
-    const requestBody = {
-        contents: [
-            {
-                role: "user",
-                parts: [{ text: systemInstruction }],
-            },
-            {
-                role: "model",
-                parts: [{ text: "Understood. I will generate the final prompt." }],
-            },
-            {
-                role: "user",
-                parts: [{ text: userContent }],
-            },
-        ],
-        generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: 2000,
-        },
-    };
-
     try {
-        console.log("Making direct fetch call for final prompt...");
-        const response = await fetch(url, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "x-goog-api-key": GEMINI_API_KEY, // API key in header
-            },
-            body: JSON.stringify(requestBody),
+        console.log("Calling Cloud Function for final prompt generation...");
+        // Invoke the Cloud Function
+        const result = await callGenerateMagicalPromptFunction({
+            initialIdea: initialPrompt, // Send the original initial prompt
+            contextQuestions: contextQuestions, // Send the combined Q&A for the Cloud Function to process
         });
 
-        if (!response.ok) {
-            const errorData = await response.json();
-            console.error("API Error Response:", errorData);
-            throw new Error(`API request failed with status ${response.status}: ${errorData.error.message || 'Unknown error'}`);
+        // The actual response data from your Cloud Function is in the 'data' property
+        const { magicalPrompt } = result.data;
+
+        console.log("Cloud Function call successful for final prompt:", magicalPrompt);
+        return magicalPrompt;
+
+    } catch (error: unknown) { // Use 'unknown' for better type safety
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        // Log the error for debugging purposes
+        console.error("Error calling Cloud Function for final prompt generation:", errorMessage);
+
+        // If the Cloud Function throws an HttpsError (e.g., 'resource-exhausted'),
+        // its properties (code, message) are accessible here.
+        if (typeof error === 'object' && error !== null && 'code' in error && 'message' in error) {
+            // Provide a more user-friendly message based on the Cloud Function's error
+            throw new Error(`Failed to generate prompt via Cloud Function: ${error.message}`);
+        } else {
+            // Fallback for other unexpected errors
+            throw new Error(`An unexpected error occurred during final prompt generation: ${errorMessage}`);
         }
-
-        const data = await response.json();
-        console.log("Direct fetch call successful for final prompt:", data);
-
-        const responseText = data.candidates[0]?.content?.parts[0]?.text;
-        return responseText || '';
-    } catch (error) {
-        console.error("Error generating final prompt:", error);
-        throw error;
     }
 };
